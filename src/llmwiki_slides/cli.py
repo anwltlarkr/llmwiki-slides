@@ -11,10 +11,10 @@ from typing import Any
 from . import __version__
 from .catalog import export_catalog_csv
 from .config import AppConfig, load_config
-from .conversion import convert_presentations
+from .conversion import audit_derivative_manifests, convert_presentations
 from .database import IndexDatabase
-from .pipeline import export_all, run_qmd, run_qmd_search, run_update, watch
-from .scanner import discover
+from .pipeline import export_all, run_integrity_backfill, run_qmd, run_qmd_search, run_update, watch
+from .scanner import discover_with_report
 
 
 def _json(value: Any) -> None:
@@ -55,6 +55,11 @@ def _progress(event: dict[str, Any]) -> None:
             print(f"[{completed}/{total}] indexed converted source: {event['path']}", file=sys.stderr)
     elif name == "conversion-file" and event.get("status") == "failed":
         print(f"Conversion failed: {event['path']}", file=sys.stderr)
+    elif name == "integrity-file":
+        completed = int(event["completed"])
+        total = int(event["total"])
+        if completed == 1 or completed == total or completed % 25 == 0 or event["status"] == "failed":
+            print(f"[{completed}/{total}] {event['status']}: {event['path']}", file=sys.stderr)
 
 
 def _doctor(config: AppConfig) -> dict[str, Any]:
@@ -110,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("init", help="Create the database and Markdown output directories")
+    commands.add_parser("migrate", help="Back up and migrate an existing database to the current schema")
     commands.add_parser("doctor", help="Check local indexing capabilities")
 
     scan = commands.add_parser("scan", help="Discover presentation files without indexing them")
@@ -138,6 +144,31 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--run-apps", action="store_true", help="Serially run Keynote or PowerPoint for missing derivatives")
     convert.add_argument("--limit", type=int, help="Inspect at most this many conversion candidates")
     convert.add_argument("--workers", type=int, help="Parallel workers used after serialized conversion")
+    convert.add_argument(
+        "--adopt-legacy",
+        action="store_true",
+        help="Explicitly trust current source/derivative pairs that have no manifest",
+    )
+
+    integrity = commands.add_parser("integrity", help="Check and backfill archive identity metadata")
+    integrity_commands = integrity.add_subparsers(dest="integrity_command", required=True)
+    integrity_check = integrity_commands.add_parser("check", help="Run SQLite and identity metadata checks")
+    integrity_check.add_argument("--strict", action="store_true", help="Fail when verification warnings remain")
+    integrity_backfill = integrity_commands.add_parser(
+        "backfill", help="Incrementally calculate exact source hashes and rebuild relations"
+    )
+    integrity_backfill.add_argument("--workers", type=int)
+    integrity_backfill.add_argument("--limit", type=int)
+    integrity_backfill.add_argument(
+        "--verify-files",
+        action="store_true",
+        help="Re-read every present source even when its quick signature is unchanged",
+    )
+    integrity_relations = integrity_commands.add_parser("relations", help="List evidence-backed file relations")
+    integrity_relations.add_argument("--needs-review", action="store_true")
+    integrity_review = integrity_commands.add_parser("review", help="Confirm or reject a detected relation")
+    integrity_review.add_argument("relation_id", type=int)
+    integrity_review.add_argument("status", choices=("confirmed", "rejected", "unreviewed"))
 
     qmd = commands.add_parser("qmd", help="Update qmd after Markdown export")
     qmd.add_argument("--embed", action="store_true", help="Also refresh semantic embeddings")
@@ -158,23 +189,32 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         config = _config(args)
-        if args.command == "init":
+        if args.command in {"init", "migrate"}:
             config.ensure_directories()
             with IndexDatabase(config.database) as database:
                 database.initialize()
+                backup = str(database.migration_backup_path or "")
             _json({
                 "database": str(config.database),
                 "markdown_output": str(config.markdown_output),
-                "status": "initialized",
+                "status": "migrated" if args.command == "migrate" else "initialized",
+                "migration_backup": backup,
             })
         elif args.command == "doctor":
             report = _doctor(config)
             _json(report)
             return 0 if report["ready"] else 1
         elif args.command == "scan":
-            candidates = discover(config)
+            report = discover_with_report(config)
+            candidates = report.candidates
             if args.json:
-                _json([candidate.to_dict() for candidate in candidates])
+                _json(
+                    {
+                        "complete": report.complete,
+                        "roots": [root.to_dict() for root in report.roots],
+                        "candidates": [candidate.to_dict() for candidate in candidates],
+                    }
+                )
             else:
                 counts: dict[str, int] = {}
                 for candidate in candidates:
@@ -183,7 +223,9 @@ def main(argv: list[str] | None = None) -> int:
                     "files": len(candidates),
                     "by_extension": dict(sorted(counts.items())),
                     "roots": [str(path) for path in config.scan_roots],
+                    "root_status": [root.to_dict() for root in report.roots],
                 })
+            return 0 if report.complete else 1
         elif args.command == "update":
             summary = run_update(
                 config,
@@ -195,9 +237,10 @@ def main(argv: list[str] | None = None) -> int:
                 progress=_progress,
             )
             _json(summary)
-            return 1 if summary.get("failed") else 0
+            return 1 if summary.get("failed") or summary.get("scan_status") != "complete" else 0
         elif args.command == "search":
             with IndexDatabase(config.database, readonly=True) as database:
+                database.validate_schema()
                 results = database.search(
                     args.query,
                     limit=max(1, args.limit),
@@ -212,21 +255,25 @@ def main(argv: list[str] | None = None) -> int:
                     location = result["path"]
                     if result["slide_number"] is not None:
                         location += f"#slide-{result['slide_number']}"
-                    print(f"{index}. {result['filename']} [{result['status']}]")
+                    print(
+                        f"{index}. {result['filename']} "
+                        f"[{result['status']}; {result['presence_status']}]"
+                    )
                     print(f"   {location}")
                     if result["slide_title"]:
                         print(f"   {result['slide_title']}")
                     if result["snippet"]:
                         print(f"   {result['snippet']}")
         elif args.command == "status":
-            with IndexDatabase(config.database) as database:
-                database.initialize()
+            with IndexDatabase(config.database, readonly=True) as database:
+                database.validate_schema()
                 _json(database.status())
         elif args.command == "export":
             _json(export_all(config))
         elif args.command == "export-csv":
             output = args.output or config.vault / "wiki/90-meta/llmwiki-slides/presentation-catalog.csv"
             with IndexDatabase(config.database, readonly=True) as database:
+                database.validate_schema()
                 _json(export_catalog_csv(database, output))
         elif args.command == "convert":
             summary = convert_presentations(
@@ -235,10 +282,39 @@ def main(argv: list[str] | None = None) -> int:
                 run_apps=args.run_apps,
                 limit=args.limit,
                 workers=args.workers,
+                adopt_legacy=args.adopt_legacy,
                 progress=_progress,
             )
             _json(summary)
             return 1 if summary.get("conversion_failed") or summary.get("indexing_failed") else 0
+        elif args.command == "integrity":
+            if args.integrity_command == "check":
+                with IndexDatabase(config.database, readonly=True) as database:
+                    database.validate_schema()
+                    report = database.integrity_report()
+                    report["derivative_manifests"] = audit_derivative_manifests(database)
+                    _json(report)
+                    if report["derivative_manifests"]["invalid_or_missing"]:
+                        return 1
+                    return 1 if report["errors"] or (args.strict and report["warnings"]) else 0
+            elif args.integrity_command == "backfill":
+                report = run_integrity_backfill(
+                    config,
+                    workers=args.workers,
+                    limit=args.limit,
+                    verify_files=args.verify_files,
+                    progress=_progress,
+                )
+                _json(report)
+                return 1 if report.get("failed") or report["sqlite_integrity"] != "ok" else 0
+            elif args.integrity_command == "relations":
+                with IndexDatabase(config.database, readonly=True) as database:
+                    database.validate_schema()
+                    _json(database.relation_rows(needs_review=args.needs_review))
+            elif args.integrity_command == "review":
+                with IndexDatabase(config.database) as database:
+                    database.initialize()
+                    _json(database.set_relation_review(args.relation_id, args.status))
         elif args.command == "qmd":
             qmd_results = run_qmd(config, embed=args.embed)
             _json(qmd_results)

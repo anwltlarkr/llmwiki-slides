@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmwiki-slides"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first, parallel presentation indexing for Markdown LLM wikis and Obsidian vaults"
 readme = "README.md"
 requires-python = ">=3.11"

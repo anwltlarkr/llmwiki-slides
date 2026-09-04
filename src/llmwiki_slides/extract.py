@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import os
+import hashlib
 import plistlib
 import posixpath
 import re
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
+from .fingerprints import pptx_slide_names, presentation_fingerprints, source_sha256
 from .models import Presentation, Slide
 from .vocabulary import classify, deterministic_summary, frequent_keywords, load_vocabulary, tokenize
 
@@ -41,23 +42,6 @@ def init_worker(
     _WORKER_SPOTLIGHT = spotlight
     _LOW_TEXT_WORDS = low_text_words_per_slide
     _IMAGE_HEAVY_RATIO = image_heavy_ratio
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    if path.is_dir():
-        for child in sorted((item for item in path.rglob("*") if item.is_file()), key=lambda item: str(item)):
-            digest.update(str(child.relative_to(path)).encode("utf-8", errors="surrogateescape"))
-            try:
-                stat = child.stat()
-            except OSError:
-                continue
-            digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
-        return digest.hexdigest()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _xml_texts(root: ET.Element) -> list[str]:
@@ -201,10 +185,7 @@ def _theme_colors(archive: zipfile.ZipFile) -> list[str]:
 
 def _extract_pptx(path: Path) -> tuple[dict[str, str], list[dict[str, Any]], list[str]]:
     with zipfile.ZipFile(path) as archive:
-        slide_names = sorted(
-            (name for name in archive.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", name)),
-            key=_slide_sort_key,
-        )
+        slide_names = pptx_slide_names(archive)
         slides = []
         for number, slide_name in enumerate(slide_names, start=1):
             notes_name = _related_notes_name(archive, slide_name)
@@ -284,17 +265,31 @@ def _visual_review(slides: list[dict[str, Any]], low_text_words: int, image_heav
 def extract_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     source_path = Path(candidate["path"])
     path = Path(candidate.get("_extract_path") or source_path)
-    if path == source_path:
-        content_hash = _sha256(source_path)
-    else:
-        digest = hashlib.sha256()
-        digest.update(_sha256(source_path).encode())
-        digest.update(_sha256(path).encode())
+    source_hash, source_algorithm = source_sha256(source_path)
+    expected_source = str(candidate.get("_expected_source_sha256", ""))
+    if expected_source and expected_source != source_hash:
+        raise RuntimeError("source hash no longer matches the conversion manifest")
+    derivative_hash = ""
+    if path != source_path:
+        derivative_hash, _ = source_sha256(path)
+        expected_derivative = str(candidate.get("_expected_derivative_sha256", ""))
+        if expected_derivative and expected_derivative != derivative_hash:
+            raise RuntimeError("derivative hash no longer matches the conversion manifest")
+    if derivative_hash:
+        digest = hashlib.sha256(b"llmwiki-slides-version-v2\0")
+        digest.update(source_hash.encode("ascii"))
+        digest.update(derivative_hash.encode("ascii"))
         content_hash = digest.hexdigest()
+    else:
+        content_hash = source_hash
     presentation = Presentation(
         candidate=candidate,
         content_hash=content_hash,
         extraction_status="needs-conversion",
+        source_sha256=source_hash,
+        source_hash_algorithm=source_algorithm,
+        derivative_sha256=derivative_hash,
+        derivative_provenance=str(candidate.get("_derivative_provenance", "")),
         derivative_path=str(path) if path != source_path else "",
         conversion_method=str(candidate.get("_conversion_method", "")),
     )
@@ -315,9 +310,11 @@ def extract_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
             setattr(presentation, key, value)
         presentation.slides = slides
         presentation.theme_colors = colors
+        for key, value in presentation_fingerprints(path, slides).items():
+            setattr(presentation, key, value)
         presentation.extraction_status = "indexed-converted" if path != source_path else "indexed"
         if _WORKER_SPOTLIGHT and os.name == "posix":
-            for key, value in _spotlight(path).items():
+            for key, value in _spotlight(source_path).items():
                 setattr(presentation, key, value)
         presentation.keywords = frequent_keywords(slides)
         rules = _WORKER_RULES if _WORKER_RULES is not None else load_vocabulary()

@@ -3,7 +3,9 @@
 ## Pipeline DAG
 
 ```text
-scan -> compare signature -> queue -> hash/extract -> classify -> SQLite commit -> Markdown export
+scan session -> reconcile presence -> compare signature -> queue -> hash/extract
+                                                        -> fingerprint -> classify
+                                                        -> SQLite commit -> relations -> Markdown export
                                       |
                                       +-> needs visual review
                                       +-> needs Keynote/PPT conversion
@@ -30,14 +32,24 @@ application state on macOS and makes worker requirements explicit.
 The database contains:
 
 - `files`: current source path, stat signature, state, and active version.
-- `versions`: hash-addressed extraction and classification results.
-- `slides`: slide-numbered text, notes, and structural counts.
+- `versions`: exact source/derivative hashes, normalized fingerprints, extraction, and classification results.
+- `slides`: slide-numbered text, notes, structural counts, and per-slide fingerprints.
 - `slides_fts`: FTS5 projection for low-latency search.
 - `jobs`: queued, running, succeeded, and failed indexing attempts.
+- `scan_runs`, `scan_roots`, and `presence_events`: root-level scan outcomes and source-presence history.
+- `relations`: version-linked duplicate, move-candidate, and content/design-variant evidence.
 
 WAL mode allows multiple readers to search while one coordinator commits results.
 The `files.current_version_id` pointer changes in the same transaction that stores the
 new slides, so a reader sees either the old complete version or the new complete one.
+If a converted source changes before a verified derivative is available, the prior
+slide index remains searchable but is explicitly marked stale and awaiting conversion.
+
+Filesystem presence is independent of indexing status. A previously observed file can
+become `missing` only when every configured root completes without traversal errors;
+records and Markdown pages are preserved. SHA equality establishes byte equality, not
+physical file identity, so a missing path plus an identical present path is only a
+`possible-move` until reviewed.
 
 ## Backpressure
 

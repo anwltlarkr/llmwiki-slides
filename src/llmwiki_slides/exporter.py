@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from . import __version__
+
 
 def _slug(value: str) -> str:
     stem = Path(value).stem.casefold()
@@ -58,6 +60,8 @@ def render_markdown(result: dict[str, Any]) -> str:
         "output/presentation",
         f"status/{status}",
     ]
+    if result.get("presence_status") == "missing":
+        tags.append("status/source-missing")
     tag_prefix = {
         "project": "project",
         "topic": "topic",
@@ -86,7 +90,9 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"created: {created}",
         f"updated: {today}",
         f"content_hash: {_yaml_string(result.get('content_hash', ''))}",
-        "generator: llmwiki-slides/0.1.0",
+        f"source_sha256: {_yaml_string(result.get('source_sha256', ''))}",
+        f"presence_status: {result.get('presence_status', 'present')}",
+        f"generator: llmwiki-slides/{__version__}",
         "---",
         "",
         f"# {_markdown_text(candidate['filename'])}",
@@ -106,13 +112,30 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- Filesystem created: `{candidate.get('created_time', '')}`",
         f"- Filesystem modified: `{candidate.get('modified_time', '')}`",
         f"- Content hash: `{result.get('content_hash', '')}`",
+        f"- Source SHA-256: `{result.get('source_sha256') or 'not calculated'}`",
+        f"- Source hash algorithm: `{result.get('source_hash_algorithm') or 'not available'}`",
+        f"- Presence: `{result.get('presence_status', 'present')}`",
+        f"- Last seen: `{result.get('last_seen_at') or 'not available'}`",
+        f"- Missing since: `{result.get('missing_since') or 'not missing'}`",
         f"- Extraction status: `{result.get('extraction_status', '')}`",
         f"- Converted derivative: `{result.get('derivative_path') or 'not used'}`",
+        f"- Derivative SHA-256: `{result.get('derivative_sha256') or 'not used'}`",
+        f"- Derivative provenance: `{result.get('derivative_provenance') or 'not used'}`",
         f"- Conversion method: `{result.get('conversion_method') or 'not used'}`",
         f"- Title metadata: {_markdown_text(result.get('title') or 'not available')}",
         f"- Creator: {_markdown_text(result.get('creator') or result.get('spotlight_authors') or 'not available')}",
         f"- Last modified by: {_markdown_text(result.get('last_modified_by') or 'not available')}",
         f"- Recently opened: {result.get('spotlight_last_used') or 'not available'}",
+        f"- Indexed content stale or awaiting reconversion: `{'yes' if result.get('source_content_stale') else 'no'}`",
+        "",
+        "## Integrity Fingerprints",
+        "",
+        f"- Fingerprint schema: `{result.get('fingerprint_version') or 'legacy/unavailable'}`",
+        f"- Text: `{result.get('text_fingerprint') or 'not available'}`",
+        f"- Media: `{result.get('media_fingerprint') or 'not available'}`",
+        f"- Structure: `{result.get('structure_fingerprint') or 'not available'}`",
+        f"- Semantic content: `{result.get('semantic_fingerprint') or 'not available'}`",
+        f"- Design: `{result.get('design_fingerprint') or 'not available'}`",
         "",
         "## Classification",
         "",
@@ -127,6 +150,7 @@ def render_markdown(result: dict[str, Any]) -> str:
         lines.append("| unclassified | needs review |")
 
     keywords = result.get("keywords", [])
+    relations = result.get("relations", [])
     lines.extend([
         "",
         "## Frequent Keywords",
@@ -141,6 +165,20 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- Needed: `{'yes' if result.get('needs_visual_review') else 'no'}`",
         f"- Reasons: {'; '.join(result.get('visual_review_reasons', [])) or 'none'}",
         f"- Theme colors: {', '.join(f'`{color}`' for color in result.get('theme_colors', [])) or 'not extracted'}",
+        "",
+        "## File Relationships",
+        "",
+    ])
+    if relations:
+        lines.extend(["| ID | Type | Related source | Confidence | Review |", "|---:|---|---|---:|---|"])
+        for relation in relations:
+            lines.append(
+                f"| {relation['id']} | {relation['relation_type']} | `{_markdown_text(relation['related_path'])}` | "
+                f"{relation['confidence']:.2f} | {relation['review_status']} |"
+            )
+    else:
+        lines.append("No evidence-backed duplicate, move candidate, or content variant is currently recorded.")
+    lines.extend([
         "",
         "## Slide Outline",
         "",

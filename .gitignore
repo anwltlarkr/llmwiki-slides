@@ -26,6 +26,7 @@ exports/
 *.key
 *.keynote
 *.odp
+*.llmwiki-slides.json
 config.toml
 config.local.toml
 *.local.toml

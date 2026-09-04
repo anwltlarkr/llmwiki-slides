@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import hashlib
+import json
 import os
 import subprocess
 import time
@@ -14,7 +15,8 @@ from .config import AppConfig
 from .database import IndexDatabase
 from .exporter import export_markdown
 from .extract import extract_candidate, init_worker
-from .scanner import discover
+from .fingerprints import SourceChangedDuringHash, package_quick_metadata, source_sha256
+from .scanner import discover_with_report
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -33,6 +35,37 @@ def _index_profile(config: AppConfig) -> str:
     if config.vocabulary and config.vocabulary.exists():
         digest.update(config.vocabulary.read_bytes())
     return digest.hexdigest()[:16]
+
+
+def _scan_profile(config: AppConfig) -> str:
+    payload = {
+        "roots": [str(path.resolve(strict=False)) for path in config.scan_roots],
+        "extensions": sorted(config.extensions),
+        "exclude_fragments": sorted(config.exclude_fragments),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
+
+
+def _hash_backfill_item(item: dict[str, Any]) -> dict[str, Any]:
+    path = Path(item["path"])
+    value, algorithm = source_sha256(path)
+    if path.is_dir():
+        _, _, current_signature = package_quick_metadata(path)
+    else:
+        stat = path.stat()
+        current_signature = f"{stat.st_size}:{stat.st_mtime_ns}"
+    stored_signature = str(item["quick_signature"])
+    if stored_signature != current_signature and not stored_signature.startswith(current_signature + ":"):
+        raise SourceChangedDuringHash(f"source stat signature changed since scan: {path}")
+    return {
+        "id": int(item["id"]),
+        "path": str(path),
+        "sha256": value,
+        "algorithm": algorithm,
+        "quick_signature": stored_signature,
+    }
 
 
 def _qmd_environment(config: AppConfig) -> dict[str, str]:
@@ -101,21 +134,48 @@ def run_update(
 ) -> dict[str, Any]:
     started = time.monotonic()
     config.ensure_directories()
-    candidates = discover(config)
+    scan_report = discover_with_report(config)
+    candidates = scan_report.candidates
     profile = _index_profile(config)
     for candidate in candidates:
         candidate.quick_signature = f"{candidate.quick_signature}:{profile}"
     _emit(progress, "scan-complete", files=len(candidates), roots=[str(path) for path in config.scan_roots])
 
+    if scan_report.complete:
+        scan_status = "complete"
+    elif scan_report.candidates or any(root.status == "complete" for root in scan_report.roots):
+        scan_status = "partial"
+    else:
+        scan_status = "failed"
+
     with IndexDatabase(config.database) as database:
         database.initialize()
-        work = database.register_candidates(candidates, force=force)
-        queued_total = len(work)
-        if limit is not None:
-            work = work[: max(0, limit)]
+        scan_id = database.record_scan(scan_report, config_fingerprint=_scan_profile(config))
+        try:
+            work = database.register_candidates(
+                candidates,
+                force=force,
+                scan_id=scan_id,
+                queue_limit=limit,
+            )
+            if scan_report.complete:
+                presence = database.reconcile_presence(
+                    scan_id=scan_id,
+                    seen_paths=(candidate.path for candidate in candidates),
+                    complete_roots=(root.root for root in scan_report.roots),
+                    extensions=config.extensions,
+                    exclude_fragments=config.exclude_fragments,
+                )
+            else:
+                presence = {"marked_missing": 0, "file_ids": [], "skipped": "scan not complete"}
+            database.finish_scan(scan_id, scan_status)
+        except Exception:
+            database.finish_scan(scan_id, "failed")
+            raise
+        touched_file_ids = set(database.presence_changed_file_ids(scan_id))
+        queued_total = max(len(work), database.pending_index_count())
         if not work:
-            summary = database.status()
-            summary.update({"discovered": len(candidates), "queued": queued_total, "processed": 0, "failed": 0, "index_profile": profile})
+            processed_summary = {"processed": 0, "failed": 0}
         else:
             database.mark_running(item["_job_id"] for item in work)
             resolved_workers = max(1, workers or config.resolved_workers())
@@ -144,10 +204,10 @@ def run_update(
                         result = future.result()
                         file_id, _ = database.store_result(result, extractor_version=__version__)
                         if file_id is not None:
-                            page = export_markdown(config.markdown_output, result)
-                            database.set_source_page(file_id, page)
+                            touched_file_ids.add(file_id)
                         status = result.get("extraction_status", "failed")
                         if status == "failed":
+                            touched_file_ids.add(int(item["_file_id"]))
                             failed += 1
                         elif status == "needs-conversion":
                             needs_conversion += 1
@@ -175,8 +235,7 @@ def run_update(
                             path=item["path"],
                             error=error,
                         )
-            summary = database.status()
-            summary.update({
+            processed_summary = {
                 "discovered": len(candidates),
                 "queued": queued_total,
                 "processed": len(work),
@@ -185,7 +244,31 @@ def run_update(
                 "needs_conversion_processed": needs_conversion,
                 "workers": resolved_workers,
                 "index_profile": profile,
-            })
+            }
+
+        relations = database.rebuild_relations()
+        touched_file_ids.update(relations.pop("affected_file_ids"))
+        exported = 0
+        for file_id in sorted(touched_file_ids):
+            result = database.presentation_for_file(file_id)
+            if result is None:
+                continue
+            page = export_markdown(config.markdown_output, result)
+            database.set_source_page(file_id, page)
+            exported += 1
+        summary = database.status()
+        summary.update(processed_summary)
+        summary.update({
+            "discovered": len(candidates),
+            "queued": queued_total,
+            "index_profile": profile,
+            "scan_id": scan_id,
+            "scan_status": scan_status,
+            "scan_roots": [root.to_dict() for root in scan_report.roots],
+            "presence_reconciliation": presence,
+            "relation_refresh": relations,
+            "exported": exported,
+        })
 
     should_update_qmd = config.qmd_update_after_run if update_qmd is None else update_qmd
     if should_update_qmd:
@@ -205,6 +288,78 @@ def export_all(config: AppConfig) -> dict[str, Any]:
             database.set_source_page(file_id, page)
             exported += 1
     return {"exported": exported, "markdown_output": str(config.markdown_output)}
+
+
+def run_integrity_backfill(
+    config: AppConfig,
+    *,
+    workers: int | None = None,
+    limit: int | None = None,
+    verify_files: bool = False,
+    progress: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    config.ensure_directories()
+    with IndexDatabase(config.database) as database:
+        database.initialize()
+        work = database.hash_backfill_candidates(verify_files=verify_files, limit=limit)
+        resolved_workers = max(1, workers or config.resolved_workers())
+        succeeded = 0
+        failed = 0
+        touched: set[int] = set()
+        if work:
+            context = mp.get_context(config.start_method)
+            with ProcessPoolExecutor(max_workers=resolved_workers, mp_context=context) as pool:
+                futures = {pool.submit(_hash_backfill_item, item): item for item in work}
+                for completed, future in enumerate(as_completed(futures), start=1):
+                    item = futures[future]
+                    try:
+                        result = future.result()
+                        database.update_file_hash(
+                            result["id"], result["sha256"], result["algorithm"], result["quick_signature"]
+                        )
+                        touched.add(result["id"])
+                        succeeded += 1
+                        _emit(
+                            progress,
+                            "integrity-file",
+                            completed=completed,
+                            total=len(work),
+                            status="hashed",
+                            path=result["path"],
+                        )
+                    except Exception as exc:
+                        failed += 1
+                        _emit(
+                            progress,
+                            "integrity-file",
+                            completed=completed,
+                            total=len(work),
+                            status="failed",
+                            path=item["path"],
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+        relations = database.rebuild_relations()
+        touched.update(relations.pop("affected_file_ids"))
+        exported = 0
+        for file_id in sorted(touched):
+            result = database.presentation_for_file(file_id)
+            if result is None:
+                continue
+            page = export_markdown(config.markdown_output, result)
+            database.set_source_page(file_id, page)
+            exported += 1
+        report = database.integrity_report()
+        report.update(
+            {
+                "queued": len(work),
+                "hashed": succeeded,
+                "failed": failed,
+                "workers": resolved_workers,
+                "relations": relations,
+                "exported": exported,
+            }
+        )
+        return report
 
 
 def watch(

@@ -40,6 +40,17 @@ class Presentation:
     candidate: dict[str, Any]
     content_hash: str
     extraction_status: str
+    source_sha256: str = ""
+    source_hash_algorithm: str = ""
+    derivative_sha256: str = ""
+    derivative_provenance: str = ""
+    fingerprint_version: str = ""
+    text_fingerprint: str = ""
+    media_fingerprint: str = ""
+    media_manifest: list[dict[str, Any]] = field(default_factory=list)
+    structure_fingerprint: str = ""
+    semantic_fingerprint: str = ""
+    design_fingerprint: str = ""
     derivative_path: str = ""
     conversion_method: str = ""
     title: str = ""

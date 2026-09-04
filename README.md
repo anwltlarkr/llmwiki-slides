@@ -21,7 +21,12 @@ into a noisy tag list.
 - Recursive `.pptx`, `.ppsx`, `.odp`, `.ppt`, `.pps`, `.key`, and `.keynote` discovery.
 - Direct, dependency-free PPTX/ODP slide text extraction.
 - Slide titles, body text, speaker notes, image/table/chart counts, and theme colors.
-- File hashes and incremental reindexing based on size and modification time.
+- Byte-exact SHA-256 source hashes, including recursive content hashing for Keynote packages.
+- Separate versioned text, media, structure, semantic-content, and design fingerprints.
+- Scan sessions with root-level error reporting, presence history, and conservative missing detection.
+- Evidence-backed exact-duplicate, possible-move, format-variant, and design-variant relations.
+- Source-bound conversion manifests that reject stale derivatives.
+- Incremental reindexing based on fast size/mtime hints, with an explicit full verification command.
 - Weighted, multi-axis classification from a user-controlled TOML vocabulary.
 - Frequent terms calculated only from slide content, not generated summaries or paths.
 - SQLite WAL mode with a single writer and concurrent search readers.
@@ -80,6 +85,7 @@ exclude_fragments = ["/ObsidianVault/", "/node_modules/", "/.git/"]
 ```sh
 llmwiki-slides --config config.local.toml doctor
 llmwiki-slides --config config.local.toml scan
+llmwiki-slides --config config.local.toml migrate
 llmwiki-slides --config config.local.toml update
 llmwiki-slides --config config.local.toml search "temperature projections"
 llmwiki-slides --config config.local.toml search "temperature projections" --all-slides
@@ -87,6 +93,10 @@ llmwiki-slides --config config.local.toml status
 llmwiki-slides --config config.local.toml export-csv
 llmwiki-slides --config config.local.toml convert
 llmwiki-slides --config config.local.toml convert --run-apps --limit 10
+llmwiki-slides --config config.local.toml integrity check
+llmwiki-slides --config config.local.toml integrity backfill
+llmwiki-slides --config config.local.toml integrity relations --needs-review
+llmwiki-slides --config config.local.toml integrity review 42 confirmed
 llmwiki-slides --config config.local.toml qmd --embed
 llmwiki-slides --config config.local.toml qmd-search "quarterly project review"
 ```
@@ -101,10 +111,23 @@ llmwiki-slides --config config.local.toml search "regional climate model"
 
 The writer commits one completed deck at a time. Searches continue to use the prior
 complete version until the replacement is ready, so they never observe a partial deck.
+Read-only commands refuse an older schema and direct the operator to run `migrate`;
+the migration first creates a SQLite backup and then applies its DDL transactionally.
 
 `convert` first reuses configured PPTX derivative folders. `--run-apps` additionally
 opens Keynote or PowerPoint for files without a derivative, one presentation at a time;
 the exported PPTX files are then extracted and classified in the process pool.
+
+Derivative reuse is intentionally strict. A sidecar manifest must match the current
+source SHA-256 and derivative SHA-256. Pre-v0.2 derivatives stay searchable as
+`legacy-unverified`; they are not silently trusted. `convert --adopt-legacy` is an
+explicit user decision to bind the currently observed source and derivative hashes.
+
+`integrity backfill` incrementally fills missing exact source hashes and can be stopped
+and resumed. `--verify-files` deliberately re-reads every present source, including
+files whose fast size/mtime signature did not change. Matching bytes never prove that
+a file was moved: when an old path is missing and an identical new path exists, the
+tool records only a `possible-move` relation for human review.
 
 `export-csv` writes a machine-readable catalog containing source paths, timestamps,
 authors, slide and image counts, visual-review flags, classification axes, frequent
@@ -138,6 +161,7 @@ without allowing one incidental body mention to contaminate categories.
 - Serialized adapters: Keynote, PowerPoint, OCR, and qmd updates.
 
 See [docs/architecture.md](docs/architecture.md) for the job and storage model.
+See [docs/integrity-v0.2.md](docs/integrity-v0.2.md) for identity semantics and safety invariants.
 
 ## Test
 

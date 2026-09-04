@@ -16,6 +16,8 @@ metadata from private presentations.
   `.key`, `.keynote`, and `.odp`.
 - SQLite indexes, generated Markdown source pages, conversion caches, logs, and
   screenshots of real search results.
+- Conversion sidecar manifests (`*.llmwiki-slides.json`), which contain local source
+  and derivative paths plus cryptographic hashes.
 - Local configuration files containing home-directory paths or scan roots.
 - Personal controlled vocabularies, project names, institutional names, and private
   research terminology.

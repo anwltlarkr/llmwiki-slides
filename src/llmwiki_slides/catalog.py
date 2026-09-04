@@ -17,6 +17,9 @@ CATALOG_FIELDS = [
     "filename",
     "file_type",
     "status",
+    "presence_status",
+    "last_seen_at",
+    "missing_since",
     "size_bytes",
     "created_time",
     "modified_time",
@@ -38,8 +41,20 @@ CATALOG_FIELDS = [
     "output_relations",
     "frequent_keywords",
     "summary",
+    "source_sha256",
+    "source_hash_algorithm",
+    "indexed_source_sha256",
+    "fingerprint_version",
+    "text_fingerprint",
+    "media_fingerprint",
+    "structure_fingerprint",
+    "semantic_fingerprint",
+    "design_fingerprint",
     "derivative_path",
+    "derivative_sha256",
+    "derivative_provenance",
     "conversion_method",
+    "relations",
     "error",
 ]
 
@@ -60,15 +75,22 @@ def _single_line(value: Any) -> str:
 
 
 def catalog_rows(database: IndexDatabase) -> list[dict[str, Any]]:
+    relations_by_file = database.relations_by_file()
     rows = database.connection.execute(
         """
-        SELECT f.path, f.source_page, f.filename, f.extension, f.status,
+        SELECT f.id AS file_id, f.path, f.source_page, f.filename, f.extension, f.status,
+               f.presence_status, f.last_seen_at, f.missing_since,
                f.size_bytes, f.created_time, f.modified_time, f.error,
+               f.source_sha256, f.source_hash_algorithm,
                v.spotlight_last_used, v.title, v.creator, v.last_modified_by,
                v.slide_count, v.text_char_count, v.image_count,
                v.needs_visual_review, v.visual_reasons_json, v.theme_colors_json,
                v.classification_json, v.keywords_json, v.summary,
-               v.derivative_path, v.conversion_method
+               v.source_sha256 AS indexed_source_sha256,
+               v.fingerprint_version, v.text_fingerprint, v.media_fingerprint,
+               v.structure_fingerprint, v.semantic_fingerprint, v.design_fingerprint,
+               v.derivative_path, v.derivative_sha256, v.derivative_provenance,
+               v.conversion_method
         FROM files f
         LEFT JOIN versions v ON v.id=f.current_version_id
         ORDER BY f.path
@@ -78,6 +100,7 @@ def catalog_rows(database: IndexDatabase) -> list[dict[str, Any]]:
     for row in rows:
         classification = _json(row["classification_json"], {})
         keywords = _json(row["keywords_json"], [])
+        relations = relations_by_file.get(int(row["file_id"]), [])
         output.append(
             {
                 "source_path": row["path"],
@@ -85,6 +108,9 @@ def catalog_rows(database: IndexDatabase) -> list[dict[str, Any]]:
                 "filename": row["filename"],
                 "file_type": row["extension"].lstrip("."),
                 "status": row["status"],
+                "presence_status": row["presence_status"],
+                "last_seen_at": row["last_seen_at"] or "",
+                "missing_since": row["missing_since"] or "",
                 "size_bytes": row["size_bytes"],
                 "created_time": row["created_time"] or "",
                 "modified_time": row["modified_time"] or "",
@@ -110,8 +136,22 @@ def catalog_rows(database: IndexDatabase) -> list[dict[str, Any]]:
                     if item.get("term")
                 ),
                 "summary": _single_line(row["summary"]),
+                "source_sha256": row["source_sha256"] or "",
+                "source_hash_algorithm": row["source_hash_algorithm"] or "",
+                "indexed_source_sha256": row["indexed_source_sha256"] or "",
+                "fingerprint_version": row["fingerprint_version"] or "",
+                "text_fingerprint": row["text_fingerprint"] or "",
+                "media_fingerprint": row["media_fingerprint"] or "",
+                "structure_fingerprint": row["structure_fingerprint"] or "",
+                "semantic_fingerprint": row["semantic_fingerprint"] or "",
+                "design_fingerprint": row["design_fingerprint"] or "",
                 "derivative_path": row["derivative_path"] or "",
+                "derivative_sha256": row["derivative_sha256"] or "",
+                "derivative_provenance": row["derivative_provenance"] or "",
                 "conversion_method": row["conversion_method"] or "",
+                "relations": "; ".join(
+                    f"#{item['id']}:{item['relation_type']}:{item['related_path']}" for item in relations
+                ),
                 "error": _single_line(row["error"]),
             }
         )
