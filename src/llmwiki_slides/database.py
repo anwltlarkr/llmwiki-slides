@@ -301,11 +301,12 @@ class IndexDatabase:
             "SELECT id, status FROM jobs WHERE file_id=? AND quick_signature=? AND stage='convert-index'",
             (file_id, signature),
         ).fetchone()
-        if row["status"] == "succeeded":
-            self.connection.commit()
-            return None
         cursor.execute(
-            "UPDATE jobs SET status='running', attempts=attempts+1, error='', started_at=CURRENT_TIMESTAMP WHERE id=?",
+            """
+            UPDATE jobs SET status='running', attempts=attempts+1, error='',
+                            started_at=CURRENT_TIMESTAMP, finished_at=NULL
+            WHERE id=?
+            """,
             (row["id"],),
         )
         cursor.execute("UPDATE files SET status='indexing', updated_at=CURRENT_TIMESTAMP WHERE id=?", (file_id,))

@@ -6,6 +6,7 @@ import zipfile
 import hashlib
 from pathlib import Path
 
+from llmwiki_slides.catalog import export_catalog_csv
 from llmwiki_slides.database import IndexDatabase
 from llmwiki_slides.config import AppConfig
 from llmwiki_slides.conversion import find_reusable_derivative
@@ -23,7 +24,7 @@ SLIDE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
       <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Climate model overview</a:t></a:r></a:p></p:txBody>
     </p:sp>
     <p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
-      <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Regional simulations improve temperature projections across diverse climates.</a:t></a:r></a:p></p:txBody>
+      <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Regional simulations improve temperature projections across diverse climates at [[region:year]].</a:t></a:r></a:p></p:txBody>
     </p:sp>
     <p:pic><p:nvPicPr/><p:blipFill/><p:spPr/></p:pic>
   </p:spTree></p:cSld>
@@ -118,11 +119,20 @@ class IndexingTests(unittest.TestCase):
             matches = database.search("temperature projections", limit=5)
             self.assertEqual(matches[0]["slide_number"], 1)
             self.assertIn("temperature", matches[0]["snippet"].casefold())
+            catalog = self.root / "presentation-catalog.csv"
+            report = export_catalog_csv(database, catalog)
+            self.assertEqual(report["rows"], 1)
+            catalog_text = catalog.read_text(encoding="utf-8")
+            self.assertIn("source_path,source_page,filename,file_type,status", catalog_text)
+            self.assertIn("climate-model-review.pptx", catalog_text)
+            self.assertIn("climate-model", catalog_text)
             self.assertEqual(database.register_candidates([candidate]), [])
         text = page.read_text(encoding="utf-8")
         self.assertIn("type: source", text)
         self.assertIn("## Indexed Slide Text", text)
         self.assertIn("Regional simulations improve", text)
+        self.assertIn(r"\[\[region:year\]\]", text)
+        self.assertNotIn("[[region:year]]", text)
 
     def test_queued_job_is_resumable(self) -> None:
         database_path = self.root / "resume.sqlite3"
@@ -171,6 +181,17 @@ class IndexingTests(unittest.TestCase):
             database.store_result(indexed, extractor_version="test")
             self.assertEqual(database.conversion_candidates(), [])
             self.assertEqual(database.search("temperature projections")[0]["filename"], "legacy.key")
+
+            refreshed = database.register_candidates([source], force=True)
+            database.mark_running([refreshed[0]["_job_id"]])
+            catalog = extract_candidate(refreshed[0])
+            database.store_result(catalog, extractor_version="test")
+            pending = database.conversion_candidates()[0]
+            repeated = database.queue_conversion_import(pending, derivative, method="reused-export")
+            self.assertIsNotNone(repeated)
+            indexed = extract_candidate(repeated)
+            database.store_result(indexed, extractor_version="test")
+            self.assertEqual(database.status()["file_status"], {"indexed-converted": 1})
 
 
 if __name__ == "__main__":

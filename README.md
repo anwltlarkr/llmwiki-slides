@@ -60,6 +60,10 @@ Set the vault, scan roots, exclusion fragments, and optional vocabulary path in
 `config.local.toml`. Personal paths and research vocabularies should remain outside
 the public repository.
 
+The optional qmd `config_home` setting selects an XDG configuration directory. It is
+useful when a vault needs collection-specific ignore rules without changing a user's
+global qmd configuration.
+
 ```toml
 [vault]
 path = "/path/to/ObsidianVault"
@@ -80,6 +84,7 @@ llmwiki-slides --config config.local.toml update
 llmwiki-slides --config config.local.toml search "temperature projections"
 llmwiki-slides --config config.local.toml search "temperature projections" --all-slides
 llmwiki-slides --config config.local.toml status
+llmwiki-slides --config config.local.toml export-csv
 llmwiki-slides --config config.local.toml convert
 llmwiki-slides --config config.local.toml convert --run-apps --limit 10
 llmwiki-slides --config config.local.toml qmd --embed
@@ -100,6 +105,10 @@ complete version until the replacement is ready, so they never observe a partial
 `convert` first reuses configured PPTX derivative folders. `--run-apps` additionally
 opens Keynote or PowerPoint for files without a derivative, one presentation at a time;
 the exported PPTX files are then extracted and classified in the process pool.
+
+`export-csv` writes a machine-readable catalog containing source paths, timestamps,
+authors, slide and image counts, visual-review flags, classification axes, frequent
+keywords, summaries, and conversion details. Use `--output` to choose another path.
 
 ## Controlled vocabulary
 

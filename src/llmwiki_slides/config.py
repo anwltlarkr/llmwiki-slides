@@ -28,6 +28,7 @@ class AppConfig:
     qmd_command: str = "qmd"
     qmd_collection: str = "vault"
     qmd_cache_home: Path | None = None
+    qmd_config_home: Path | None = None
     qmd_update_after_run: bool = False
     qmd_embed_after_run: bool = False
     low_text_words_per_slide: int = 18
@@ -127,4 +128,5 @@ def load_config(
         conversion_timeout=max(30, int(conversion_data.get("timeout", 240))),
         config_path=config_path,
         qmd_cache_home=_resolve(base, qmd_data["cache_home"]) if qmd_data.get("cache_home") else None,
+        qmd_config_home=_resolve(base, qmd_data["config_home"]) if qmd_data.get("config_home") else None,
     )

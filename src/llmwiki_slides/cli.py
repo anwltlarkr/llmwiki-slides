@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .catalog import export_catalog_csv
 from .config import AppConfig, load_config
 from .conversion import convert_presentations
 from .database import IndexDatabase
@@ -129,6 +130,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("status", help="Show index and job counts")
     commands.add_parser("export", help="Regenerate all Markdown source pages from SQLite")
+    export_csv = commands.add_parser("export-csv", help="Export the current presentation catalog as CSV")
+    export_csv.add_argument("--output", help="CSV destination; defaults to the vault metadata directory")
 
     convert = commands.add_parser("convert", help="Index existing or newly exported Keynote/legacy PowerPoint derivatives")
     convert.add_argument("--reuse-existing", action=argparse.BooleanOptionalAction, default=True)
@@ -221,6 +224,10 @@ def main(argv: list[str] | None = None) -> int:
                 _json(database.status())
         elif args.command == "export":
             _json(export_all(config))
+        elif args.command == "export-csv":
+            output = args.output or config.vault / "wiki/90-meta/llmwiki-slides/presentation-catalog.csv"
+            with IndexDatabase(config.database, readonly=True) as database:
+                _json(export_catalog_csv(database, output))
         elif args.command == "convert":
             summary = convert_presentations(
                 config,

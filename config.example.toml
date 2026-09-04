@@ -27,6 +27,8 @@ command = "qmd"
 collection = "vault"
 # Set this when the default user cache is not writable.
 # cache_home = "/path/to/writable/cache"
+# Set this to use a dedicated qmd collection configuration.
+# config_home = "/path/to/writable/config"
 update_after_run = false
 embed_after_run = false
 

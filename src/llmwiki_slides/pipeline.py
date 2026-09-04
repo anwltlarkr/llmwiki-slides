@@ -44,6 +44,9 @@ def _qmd_environment(config: AppConfig) -> dict[str, str]:
     if config.qmd_cache_home:
         config.qmd_cache_home.mkdir(parents=True, exist_ok=True)
         environment["XDG_CACHE_HOME"] = str(config.qmd_cache_home)
+    if config.qmd_config_home:
+        config.qmd_config_home.mkdir(parents=True, exist_ok=True)
+        environment["XDG_CONFIG_HOME"] = str(config.qmd_config_home)
     return environment
 
 
