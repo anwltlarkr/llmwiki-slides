@@ -1470,9 +1470,11 @@ class IndexDatabase:
             "source_hash_algorithm": row["current_source_hash_algorithm"] or row["indexed_source_hash_algorithm"],
             "source_content_stale": bool(
                 row["indexed_quick_signature"] != row["quick_signature"]
-                or
-                (current_source and indexed_source and current_source != indexed_source)
-                or (row["file_status"] == "needs-conversion" and row["derivative_path"])
+                or (current_source and indexed_source and current_source != indexed_source)
+                or (
+                    row["file_status"] == "needs-conversion"
+                    and int(row["slide_count"] or 0) > 0
+                )
                 or row["file_status"] == "failed"
             ),
             "derivative_sha256": row["derivative_sha256"], "derivative_path": row["derivative_path"],

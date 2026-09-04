@@ -308,6 +308,25 @@ class IndexingTests(unittest.TestCase):
         self.assertNotEqual(first["text_fingerprint"], second["text_fingerprint"])
         self.assertNotEqual(first["semantic_fingerprint"], second["semantic_fingerprint"])
 
+    def test_damaged_refresh_retains_and_marks_prior_slide_index_stale(self) -> None:
+        database_path = self.root / "damaged-refresh.sqlite3"
+        with IndexDatabase(database_path) as database:
+            database.initialize()
+            work = database.register_candidates([candidate_for(self.deck)])
+            database.mark_running([work[0]["_job_id"]])
+            database.store_result(extract_candidate(work[0]), extractor_version="test")
+
+            self.deck.write_bytes(self.deck.read_bytes()[:-20])
+            refreshed = database.register_candidates([candidate_for(self.deck)])
+            database.mark_running([refreshed[0]["_job_id"]])
+            result = extract_candidate(refreshed[0])
+            self.assertEqual(result["extraction_status"], "needs-conversion")
+            file_id, _ = database.store_result(result, extractor_version="test")
+            presentation = database.presentation_for_file(file_id)
+            self.assertTrue(presentation["source_content_stale"])
+            self.assertEqual(presentation["slides"][0]["title"], "Climate model overview")
+            self.assertEqual(database.search("temperature projections")[0]["filename"], self.deck.name)
+
     def test_actual_presentation_order_controls_extraction_and_fingerprint(self) -> None:
         normal = self.root / "normal-order.pptx"
         reversed_deck = self.root / "reversed-order.pptx"
