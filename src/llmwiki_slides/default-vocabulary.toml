@@ -1,0 +1,36 @@
+# Conservative, generic rules. Add domain-specific rules in a separate local file.
+
+[[rules]]
+axis = "presentation_type"
+name = "workshop"
+patterns = ["\\bworkshop\\b", "\\btutorial\\b", "워크숍", "워크샵", "강의자료"]
+fields = ["filename", "path", "title", "slide_titles", "body"]
+min_score = 3
+
+[[rules]]
+axis = "presentation_type"
+name = "team-meeting"
+patterns = ["team[ _-]?meeting", "lab[ _-]?meeting", "팀[ _-]?미팅"]
+fields = ["filename", "path", "title", "slide_titles"]
+min_score = 4
+
+[[rules]]
+axis = "presentation_type"
+name = "conference"
+patterns = ["\\bconference\\b", "\\bsymposium\\b", "\\bcongress\\b", "학회", "심포지엄"]
+fields = ["filename", "path", "title", "slide_titles"]
+min_score = 4
+
+[[rules]]
+axis = "output_relation"
+name = "publication-figures"
+patterns = ["main[ _-]?figures?", "suppl(?:ementary)?[ _-]?figures?", "graphical[ _-]?abstract", "\\bproof\\b", "\\bfigure[_ -]?\\d+"]
+fields = ["filename", "path", "title"]
+min_score = 4
+
+[[rules]]
+axis = "output_relation"
+name = "media-announcement"
+patterns = ["보도자료", "press[ _-]?release", "media[ _-]?announcement"]
+fields = ["filename", "path", "title"]
+min_score = 4

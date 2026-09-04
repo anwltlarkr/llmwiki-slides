@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmwiki-slides"
+version = "0.1.0"
+description = "Local-first, parallel presentation indexing for Markdown LLM wikis and Obsidian vaults"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "llmwiki-slides contributors" }]
+keywords = ["llmwiki", "obsidian", "powerpoint", "pptx", "slides", "fts5"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Database :: Database Engines/Servers",
+  "Topic :: Office/Business :: Office Suites",
+]
+dependencies = []
+
+[project.scripts]
+llmwiki-slides = "llmwiki_slides.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+llmwiki_slides = ["default-vocabulary.toml", "scripts/*.scpt"]
+
+[tool.unittest]
+start-directory = "tests"

@@ -1,0 +1,37 @@
+[vault]
+path = "/path/to/ObsidianVault"
+database = "wiki/90-meta/llmwiki-slides/index.sqlite3"
+markdown_output = "wiki/10-sources/presentations"
+
+[scan]
+roots = ["/path/to/presentation/folders"]
+extensions = [".pptx", ".ppsx", ".ppt", ".pps", ".key", ".keynote", ".odp"]
+exclude_fragments = ["/ObsidianVault/", "/node_modules/", "/.git/"]
+
+[workers]
+# 0 chooses max(1, min(6, CPU count - 2)).
+extract = 0
+scan = 4
+# spawn is safe with macOS application automation and Python 3.14+.
+start_method = "spawn"
+
+[index]
+# Omit vocabulary to use the conservative vocabulary bundled with the package.
+# vocabulary = "/path/to/presentation-vocabulary.toml"
+spotlight = false
+low_text_words_per_slide = 18
+image_heavy_ratio = 1.2
+
+[qmd]
+command = "qmd"
+collection = "vault"
+# Set this when the default user cache is not writable.
+# cache_home = "/path/to/writable/cache"
+update_after_run = false
+embed_after_run = false
+
+[conversion]
+# Existing export trees may use one subdirectory per SHA-1 source-path id.
+reuse_roots = []
+cache = "wiki/90-meta/llmwiki-slides/conversions"
+timeout = 240

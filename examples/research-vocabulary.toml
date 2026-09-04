@@ -1,0 +1,22 @@
+# Copy and adapt this file outside the public package repository.
+
+[[rules]]
+axis = "project"
+name = "example-project"
+patterns = ["example[ _-]?project", "\\bEXAMPLE\\b"]
+fields = ["filename", "path", "title", "slide_titles", "body", "notes"]
+min_score = 4
+
+[[rules]]
+axis = "topic"
+name = "example-method"
+patterns = ["example[ _-]?method", "specific technical phrase"]
+fields = ["title", "slide_titles", "body", "notes"]
+min_score = 3
+
+[[rules]]
+axis = "event"
+name = "example-annual-meeting"
+patterns = ["example[ _-]?annual", "annual[ _-]?meeting"]
+fields = ["filename", "path", "title"]
+min_score = 4
