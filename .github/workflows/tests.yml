@@ -17,3 +17,45 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install build
+          # By default, build creates the wheel from the sdist, checking both artifacts.
+          python -m build
+      - name: Install wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-smoke"
+          "$RUNNER_TEMP/wheel-smoke/bin/python" -m pip install --no-deps dist/*.whl
+      - name: Check installed CLI and package resources
+        working-directory: ${{ runner.temp }}
+        run: |
+          test "$("$RUNNER_TEMP/wheel-smoke/bin/llmwiki-slides" --version)" = "llmwiki-slides 0.2.0"
+          "$RUNNER_TEMP/wheel-smoke/bin/python" -I - <<'PY'
+          import sys
+          import tomllib
+          from importlib.metadata import version
+          from importlib.resources import files
+          from pathlib import Path
+
+          import llmwiki_slides
+
+          assert version("llmwiki-slides") == llmwiki_slides.__version__ == "0.2.0"
+          assert Path(llmwiki_slides.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+          package = files("llmwiki_slides")
+          vocabulary = package.joinpath("default-vocabulary.toml")
+          assert vocabulary.is_file(), "Missing default-vocabulary.toml"
+          assert tomllib.loads(vocabulary.read_text(encoding="utf-8")), "Empty vocabulary"
+          for name in ("export_keynote.scpt", "export_powerpoint.scpt"):
+              script = package.joinpath("scripts", name)
+              assert script.is_file(), f"Missing scripts/{name}"
+              assert script.read_bytes(), f"Empty scripts/{name}"
+          print("Installed wheel version and package resources verified")
+          PY
